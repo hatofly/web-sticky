@@ -153,8 +153,7 @@
             <button data-mode="preview">プレビュー</button>
           </header>
           <div class="pane" id="editorPane"><textarea id="editor" spellcheck="false" aria-label="Markdown本文"></textarea></div>
-          <div class="pane" id="preview" hidden></div>
-          <div class="hint" id="pasteHint">ヒント：ファイルマネージャーに「パスをコピー」があれば、それを使うと便利です。</div>`;
+          <div class="pane" id="preview" hidden></div>`;
         const editor = doc.querySelector("#editor");
         editor.value = markdown;
         editor.addEventListener("input", () => {
