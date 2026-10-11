@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Floating Markdown Sticky Note</title>
+  <style>
+    :root { color-scheme: light; --ink:#252525; --muted:#777; --line:#e5e1d8; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:#f6f5f1; }
+    main { max-width:780px; margin:12vh auto; padding:32px; }
+    h1 { font-size:clamp(1.7rem,4vw,2.4rem); letter-spacing:-.04em; margin:0 0 8px; }
+    p { color:#626262; max-width:58ch; }
+    button { font:inherit; cursor:pointer; border:1px solid #d7d3c9; border-radius:10px; padding:10px 15px; background:white; color:inherit; }
+    button.primary { background:#252525; color:white; border-color:#252525; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin:24px 0; }
+    .hint { font-size:13px; color:var(--muted); }
+    .status { font-size:13px; margin-top:16px; color:#666; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Floating Markdown Note</h1>
+    <p>Markdownで書いて、プレビューできる付箋をデスクトップ上に1枚浮かべます。</p>
+    <div class="actions">
+      <button class="primary" id="open">付箋を開く</button>
+      <button id="help">使い方</button>
+    </div>
+    <p class="hint">Chrome / Edge などの Document Picture-in-Picture 対応ブラウザ向け。</p>
+    <div class="status" id="status">準備完了。ボタンを押して付箋を開いてください。</div>
+    <section id="helpText" hidden>
+      <p><b>使い方</b></p>
+      <ul>
+        <li>「付箋を開く」でPiPウィンドウを開きます。PiP自体が1枚の付箋です。</li>
+        <li>「編集」と「プレビュー」を切り替えてMarkdownを編集します。</li>
+        <li>Markdownの区切り線（<code>---</code>）などで内容を整理できます。</li>
+        <li>marked.jsをCDNから読み込み、HTMLタグやiframeもプレビューに反映します。外部ライブラリの読み込みにインターネット接続が必要です。</li>
+        <li>ローカルファイルのフルパス貼り付けは、OS・ブラウザがクリップボードに渡す内容に依存します。ファイルマネージャーからファイルをコピーしても、ブラウザにはファイル名やファイルデータしか渡らず、パスを取得できない場合があります。</li>
+      </ul>
+    </section>
+  </main>
+<script>
+(() => {
+  const openButton = document.querySelector("#open");
+  const status = document.querySelector("#status");
+  const help = document.querySelector("#help");
+  const helpText = document.querySelector("#helpText");
+  let pip = null;
+  let markdown = `# メモ
+
+ここにMarkdownを書く。
+
+---
+
+- TODO
+- **重要なこと**
+
+画像の例：
+
+![画像の説明](file:///home/yourname/Pictures/example.png)`;
+  let mode = "edit";
+
+  help.addEventListener("click", () => { helpText.hidden = !helpText.hidden; });
+
+  function renderMarkdown(source) {
+    // marked.js supports GFM and passes raw HTML through by design.
+    // This note is intended for trusted, personally authored content.
+    if (!pip || !pip.marked) return "<p>Markdownパーサーを読み込み中です…</p>";
+    return pip.marked.parse(source, { gfm: true, breaks: true });
+  }
+
+  function updatePreview() {
+    if (!pip || pip.closed) return;
+    const preview = pip.document.querySelector("#preview");
+    if (preview) {
+      if (pip.marked) preview.innerHTML = renderMarkdown(markdown);
+      else preview.innerHTML = "<p>marked.jsを読み込み中です…</p>";
+    }
+  }
+
+  function setMode(nextMode) {
+    mode = nextMode;
+    if (!pip || pip.closed) return;
+    const doc = pip.document;
+    doc.querySelector("#editorPane").hidden = mode !== "edit";
+    doc.querySelector("#preview").hidden = mode !== "preview";
+    doc.querySelectorAll("[data-mode]").forEach(button => {
+      button.classList.toggle("active", button.dataset.mode === mode);
+    });
+    if (mode === "preview") updatePreview();
+    else doc.querySelector("#editor").focus();
+  }
+
+  async function pasteClipboardPath(event) {
+    // Browsers cannot reliably expose an OS file manager's "copied file path".
+    // When the clipboard supplies a text path/URI, leave normal paste intact.
+    // For file objects, prevent accidental insertion of "[object File]" and explain limitation.
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    const hasFiles = Array.from(items).some(item => item.kind === "file");
+    const hasText = Array.from(items).some(item => item.kind === "string" && item.type === "text/plain");
+    if (hasFiles && !hasText) {
+      event.preventDefault();
+      const hint = pip.document.querySelector("#pasteHint");
+      hint.textContent = "クリップボードにはファイル本体が含まれていますが、フルパスはブラウザから取得できません。必要ならファイルマネージャーの「パスをコピー」を使ってください。";
+      setTimeout(() => { if (hint) hint.textContent = "ヒント：ファイルマネージャーに「パスをコピー」があれば、それを使うと便利です。"; }, 6500);
+    }
+  }
+
+  function openPip() {
+    if (!("documentPictureInPicture" in window)) {
+      status.textContent = "このブラウザはDocument PiPに未対応です。最新版のChrome / Edgeで試してください。";
+      return;
+    }
+    if (pip && !pip.closed) {
+      pip.focus();
+      return;
+    }
+    window.documentPictureInPicture.requestWindow({ width: 360, height: 440 })
+      .then(win => {
+        pip = win;
+        const doc = win.document;
+        doc.title = "Markdown Sticky Note";
+        doc.head.innerHTML = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Markdown Sticky Note</title>';
+        const style = doc.createElement("style");
+        style.textContent = `
+          * { box-sizing:border-box; }
+          body { margin:0; padding:0; background:#fff9cf; color:#28271f; font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+          .bar { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:3px; padding:2px 4px; background:#f3eaa9; border-bottom:1px solid #e0d58e; min-height:20px; }
+          .brand { flex:1; font-size:6px; line-height:1; font-weight:750; letter-spacing:.06em; }
+          .bar button { cursor:pointer; border:1px solid #d7cc83; border-radius:4px; padding:1px 3px; background:#fffde9; color:#28271f; font:7px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif; white-space:nowrap; }
+          button.active { background:#333126; border-color:#333126; color:white; }
+          .pane { padding:12px; }
+          textarea { display:block; width:100%; min-height:300px; resize:vertical; border:0; outline:0; background:transparent; color:inherit; font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
+          #preview { overflow-wrap:anywhere; }
+          #preview p { margin:0 0 10px; }
+          #preview h1,#preview h2,#preview h3,#preview h4,#preview h5,#preview h6 { line-height:1.25; margin:12px 0 6px; }
+          #preview h1 { font-size:1.55rem; } #preview h2 { font-size:1.3rem; } #preview h3 { font-size:1.1rem; }
+          #preview ul { padding-left:20px; margin:6px 0 10px; }
+          #preview blockquote { margin:8px 0; padding-left:10px; border-left:3px solid #c8b957; color:#605b3e; }
+          #preview hr { border:0; border-top:1px solid #d8cd87; margin:14px 0; }
+          #preview pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#f2e9a7; padding:8px; border-radius:5px; }
+          #preview code { background:#f0e7a3; border-radius:3px; padding:1px 3px; }
+          #preview img { max-width:100%; height:auto; }
+          #preview a { color:#4b45a8; }
+          .hint { font-size:11px; color:#77714c; padding:0 12px 10px; }
+          [hidden] { display:none !important; }
+        `;
+        doc.head.appendChild(style);
+        const markedScript = doc.createElement("script");
+        markedScript.src = "https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js";
+        markedScript.onload = () => updatePreview();
+        markedScript.onerror = () => {
+          const preview = doc.querySelector("#preview");
+          if (preview) preview.textContent = "marked.jsを読み込めませんでした。インターネット接続やCDNへのアクセスを確認してください。";
+        };
+        doc.head.appendChild(markedScript);
+        doc.body.innerHTML = `
+          <header class="bar">
+            <div class="brand">MARKDOWN NOTE</div>
+            <button data-mode="edit" class="active">編集</button>
+            <button data-mode="preview">プレビュー</button>
+          </header>
+          <div class="pane" id="editorPane"><textarea id="editor" spellcheck="false" aria-label="Markdown本文"></textarea></div>
+          <div class="pane" id="preview" hidden></div>
+          <div class="hint" id="pasteHint">ヒント：ファイルマネージャーに「パスをコピー」があれば、それを使うと便利です。</div>`;
+        const editor = doc.querySelector("#editor");
+        editor.value = markdown;
+        editor.addEventListener("input", () => {
+          markdown = editor.value;
+          updatePreview();
+        });
+        // Keep Tab inside the Markdown editor instead of moving focus to toolbar buttons.
+        // Insert two spaces, which work well for Markdown indentation.
+        editor.addEventListener("keydown", event => {
+          if (event.key !== "Tab" || event.ctrlKey || event.altKey || event.metaKey) return;
+          event.preventDefault();
+          const start = editor.selectionStart;
+          const end = editor.selectionEnd;
+          const indent = "  ";
+          editor.setRangeText(indent, start, end, "end");
+          markdown = editor.value;
+          updatePreview();
+        });
+        editor.addEventListener("paste", pasteClipboardPath);
+        doc.querySelectorAll("[data-mode]").forEach(button => {
+          button.addEventListener("click", () => setMode(button.dataset.mode));
+        });
+        win.addEventListener("pagehide", () => {
+          // Keep latest editor content in the opener's JS state when the PiP closes.
+          const currentEditor = win.document.querySelector("#editor");
+          if (currentEditor) markdown = currentEditor.value;
+          pip = null;
+          status.textContent = "付箋を閉じました。再度開くと内容を復元します（ページを閉じると失われます）。";
+        }, { once: true });
+        status.textContent = "付箋を開きました。Markdownの編集・プレビューを切り替えられます。";
+        editor.focus();
+      })
+      .catch(err => { status.textContent = "PiPを開けませんでした: " + err.message; });
+  }
+
+  openButton.addEventListener("click", openPip);
+})();
+</script>
+</body>
+</html>
